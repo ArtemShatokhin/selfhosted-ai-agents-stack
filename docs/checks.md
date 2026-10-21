@@ -1,0 +1,81 @@
+# The four checks that keep a self-hosted open-source agent install alive
+
+A self-hosted Kortix instance rarely fails on the model. It fails on something measurable before the first person signs in: an open door, an API a sandbox cannot reach, a backup without its key, or a doctor nobody read. Kortix is the open-source AI Operating System, and these four readings cover the first week.
+
+## Sign-up closed
+
+A domain-mode instance is reachable by design, and a new one confirms sign-ups without email. Until you set `EMAIL_URL` or `DISABLE_SIGNUP=true`, the auth service will confirm an account for any address that asks, including the address you made admin. Whoever claims an admin-listed address first becomes platform admin.
+
+```
+$ ./bin/check-signup.sh https://kortix.example.com
+disable_signup=False mailer_autoconfirm=True external=github
+OPEN — sign-up accepts any address and confirms it without an email.
+```
+
+`check-signup.sh` reads `/auth/v1/settings` and exits 0 for closed or email-verified, 1 for open, 2 when it cannot tell. With `--instance <name>` it reads `DISABLE_SIGNUP` and `EMAIL_URL` from `.env`, which works when the API is down.
+
+Run it after the first admin sign-in and after updates. Closing it takes `kortix self-host env set DISABLE_SIGNUP=true` and a restart.
+
+## An API a sandbox can reach
+
+No session runs on the server. `kortix-api` creates each one on a Platinum sandbox with `PLATINUM_API_KEY`, and that sandbox calls back to the instance's public `KORTIX_URL`. If `api.<domain>` does not resolve to the server, the stack looks healthy and no session starts. Local mode has no public URL: the app answers on port 13737 and nothing starts.
+
+```
+$ ./bin/preflight.sh kortix.example.com
+FAIL api.kortix.example.com does not resolve — sessions call back to that URL and will not start without it
+```
+
+The same run probes a preview label. Without the wildcard record, previews go through a path proxy and root-absolute links break:
+
+```
+ FAIL preview-origins: domain mode with KORTIX_PREVIEW_BASE_DOMAIN empty
+      fix: add the wildcard DNS record, then: kortix self-host env set KORTIX_PREVIEW_BASE_DOMAIN=p.<domain> / start
+```
+
+Run `preflight.sh` before `init` and after any DNS, proxy or certificate change. It also checks ports 80 and 443, which only Caddy may hold in domain mode.
+
+## A backup that carries the key
+
+The instance directory is the unit to copy: `.env` holds the secrets and signing keys, `volumes/db/data` is Postgres, `volumes/storage` keeps files. A database dump captures one of those three and leaves the key behind. `API_KEY_SECRET` decrypts every stored secret, so a copy without it restores a stack that serves and cannot read its own credentials. Expect three strings when that happens: `Undecryptable` on a project secret, `credential_undecryptable` from a connector call, and `409 SECRET_UNDECRYPTABLE` from any request that needs a value.
+
+`backup.sh` stops the stack, archives the directory, checks the three paths are inside, and writes a sha256 plus a 16-hex key fingerprint. The fingerprint is a hash, and the value never leaves the shell. `restore.sh` fingerprints the archived key and refuses the swap that breaks everything:
+
+```
+$ ./bin/restore.sh backups/kortix-default-20261021T200633Z.tgz --instance default
+ ok    checksum matches ...tgz.sha256
+ ok    archive API_KEY_SECRET fingerprint 886cf16380f71220
+ FAIL  API_KEY_SECRET differs: live instance ebba8706326c194c, archive 886cf16380f71220
+       restoring replaces the key, so every secret, connector credential and token stored now becomes unreadable
+```
+
+`--force` continues anyway, for a rebuild where the old credentials should go; the directory stays as `*.pre-restore-*`. Back up before every update and `env` change, and run a restore drill on a spare instance.
+
+## A doctor someone reads
+
+Seven checks: `docker`, `docker-compose`, `compose-config`, `instance-dir`, `email-url`, `preview-origins`, `open-sign-up`. Six of seven is the usual first result.
+
+```
+$ ./bin/doctor.sh default
+ ok   docker
+ ok   docker-compose
+ ok   compose-config
+ ok   instance-dir
+ ok   email-url
+ FAIL preview-origins: domain mode with KORTIX_PREVIEW_BASE_DOMAIN empty
+      fix: add the wildcard DNS record, then: kortix self-host env set KORTIX_PREVIEW_BASE_DOMAIN=p.<domain> / start
+ ok   open-sign-up
+
+6/7 passed
+```
+
+`doctor.sh` decodes `--json` into that table, prints a fix line for the failure, and keeps a timestamped report under `reports/`. Exit 0 means all passed, 1 a failure. Read it before anyone signs in, and after updates. An install that only ran the bootstrap leaves both outward-facing checks failing.
+
+## Sizing, disk and the daily update
+
+The published limits sum to `kortix-api` 2048m, `llm-gateway` 2048m, `frontend` 512m and Postgres fixed at 1280m. That is 5888MB of containers before host memory, so `preflight.sh` fails below 6000MB, warns to 7500, and passes above. Disk has a floor: `kortix-updater` stops below `KORTIX_MIN_FREE_DISK_MB`, 2048 by default.
+
+The updater runs at 02:00 in `America/New_York` unless `KORTIX_UPDATE_TIME` or `KORTIX_UPDATE_TZ` says otherwise. It pulls the channel, runs `kortix-migrate`, then rolls the API, gateway and front end. A failed migration swaps nothing and the old version keeps answering. `kortix self-host status` shows the last outcome, and `rollback --release <version>` returns to the old version.
+
+## What a schedule buys
+
+In cron, `verify-all.sh` reruns sign-up, doctor, update status and backup age, and exits 1 when a person is needed.
