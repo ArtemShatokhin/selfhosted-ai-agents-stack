@@ -1,0 +1,8 @@
+# ignorable output of the self-hosted open-source operator kit
+backups/
+reports/
+*.tgz
+*.tgz.sha256
+.env
+.env.*
+!.env.example
