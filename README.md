@@ -75,4 +75,6 @@ The full install path, every environment variable and the command list are in th
 
 If the question is which stack to run rather than how to check the one you have, [the same site compares six self-hosted installs](https://selfhostedaiagents.com/best-self-hosted-ai-agents) by what each one exposes on the server after the first minute: the Compose file, the ports, the sandboxing default and the licence each ships under.
 
+The monthly bill for that server — the service limits, the disk and the backups — is totalled at [what a self-hosted install costs](https://selfhostedaiagents.com/self-hosted-ai-agents-cost). If the open question is still framework or platform, [open source AI agents](https://selfhostedaiagents.com/open-source-ai-agents) separates the two by what you own after the install.
+
 Self-host is free. The managed cloud is the same platform on someone else's servers, run by [Kortix](https://kortix.com), for teams that would rather not carry the pager.
